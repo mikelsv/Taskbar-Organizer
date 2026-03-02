@@ -2,6 +2,7 @@
 #include <commctrl.h>
 
 #include "ui.h"
+#include "window_manager.h"
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"TaskbarOrganizerMainWindow";
@@ -13,6 +14,9 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     icc.dwSize = sizeof(icc);
     icc.dwICC = ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&icc);
+
+    // Тестовый вывод кнопок панели задач
+    window_manager::DebugPrintTaskbarButtons();
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);

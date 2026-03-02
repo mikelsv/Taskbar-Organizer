@@ -4,6 +4,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>    // для freopen_s
+#include <fcntl.h>   // для _O_U16TEXT
+#include <io.h>      // для _setmode и _fileno
+#include <clocale>   // для setlocale и LC_ALL
 
 namespace window_manager {
 namespace {
@@ -66,22 +70,48 @@ HWND FindTaskbarToolbarWindow() {
         return nullptr;
     }
 
-    // Recursively walk descendants by repeatedly calling FindWindowEx to locate ToolbarWindow32.
-    std::vector<HWND> stack;
-    stack.push_back(tray);
+    // Windows taskbar structure: Shell_TrayWnd -> MSTaskListWClass -> ToolbarWindow32
+    // MSTaskListWClass is the taskbar list control, and ToolbarWindow32 inside it contains the buttons
+    HWND taskList = FindWindowExW(tray, nullptr, L"MSTaskListWClass", nullptr);
+    if (taskList) {
+        HWND toolbar = FindWindowExW(taskList, nullptr, L"ToolbarWindow32", nullptr);
+        if (toolbar) {
+            return toolbar;
+        }
+    }
 
-    while (!stack.empty()) {
-        HWND parent = stack.back();
-        stack.pop_back();
+    // Fallback: try MSTaskSwWClass (older Windows versions)
+    HWND rebar = FindWindowExW(tray, nullptr, L"ReBarWindow32", nullptr);
+    HWND taskBand = rebar ? FindWindowExW(rebar, nullptr, L"MSTaskSwWClass", nullptr) : nullptr;
+    HWND toolbar = taskBand ? FindWindowExW(taskBand, nullptr, L"ToolbarWindow32", nullptr) : nullptr;
 
-        HWND child = nullptr;
-        while ((child = FindWindowExW(parent, child, nullptr, nullptr)) != nullptr) {
-            wchar_t className[64]{};
-            GetClassNameW(child, className, 64);
-            if (lstrcmpW(className, L"ToolbarWindow32") == 0) {
-                return child;
+    if (toolbar) {
+        return toolbar;
+    }
+
+    // Fallback search: shell implementations vary by Windows 10 updates.
+    HWND child = nullptr;
+    while ((child = FindWindowExW(tray, child, nullptr, nullptr)) != nullptr) {
+        if (child == tray) {
+            continue;
+        }
+
+        wchar_t className[64]{};
+        GetClassNameW(child, className, 64);
+        if (wcscmp(className, L"ToolbarWindow32") == 0 || wcscmp(className, L"MSTaskSwWClass") == 0 || wcscmp(className, L"MSTaskListWClass") == 0) {
+            // For MSTaskListWClass, we need to find ToolbarWindow32 inside it
+            if (wcscmp(className, L"MSTaskListWClass") == 0) {
+                HWND nestedToolbar = FindWindowExW(child, nullptr, L"ToolbarWindow32", nullptr);
+                if (nestedToolbar) {
+                    return nestedToolbar;
+                }
             }
-            stack.push_back(child);
+            return child;
+        }
+
+        HWND nestedToolbar = FindWindowExW(child, nullptr, L"ToolbarWindow32", nullptr);
+        if (nestedToolbar) {
+            return nestedToolbar;
         }
     }
 
@@ -283,6 +313,118 @@ void ApplyOrder(const std::vector<WindowItem>& windows, bool manualReorderEnable
         SetForegroundWindow(item.hwnd);
         Sleep(50);
     }
+}
+
+// Универсальная замена wprintf
+int console_log(const wchar_t* format, ...) {
+    wchar_t buffer[1024]; // Буфер для текста
+    va_list args;
+    va_start(args, format);
+    int result = vswprintf_s(buffer, format, args);
+    va_end(args);
+
+    if (result > 0) {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD written;
+        WriteConsoleW(hOut, buffer, (DWORD)result, &written, NULL);
+    }
+    return result;
+}
+
+// Маскируем под wprintf (теперь можно просто сменить название или оставить это)
+#define wprintf console_log 
+
+void CreateDebugConsole() {
+    // 1. Создаем консоль
+    if (AllocConsole()) {
+        FILE* fDummy;
+        // 1. Открываем как обычный текст
+        freopen_s(&fDummy, "CONOUT$", "w", stdout);
+        freopen_s(&fDummy, "CONOUT$", "w", stderr);
+        freopen_s(&fDummy, "CONIN$", "r", stdin);
+
+        // 1. Устанавливаем кодировку вывода в саму консоль (UTF-8)
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
+
+        // 2. Переключаем поток в режим UTF-8 (это уберет мусор и позволит писать по-русски)
+        _setmode(_fileno(stdout), _O_U8TEXT);
+
+        // Опционально: переназвать окно консоли
+        SetConsoleTitle(L"Debug Console");
+    }
+}
+
+// Тестовая функция для отладки - выводит список кнопок на панели задач
+void DebugPrintTaskbarButtons() {
+    // Настраиваем консоль для вывода Unicode
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    CreateDebugConsole();
+
+    wprintf(L"=== Тест получения кнопок панели задач ===\n\n");
+
+    // 1. Находим Shell_TrayWnd
+    HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!tray) {
+        wprintf(L"Ошибка: Shell_TrayWnd не найден\n");
+        return;
+    }
+    wprintf(L"Shell_TrayWnd найден: %p\n\n", tray);
+
+    // 2. Ищем MSTaskListWClass внутри Shell_TrayWnd
+    HWND taskList = FindWindowExW(tray, nullptr, L"MSTaskListWClass", nullptr);
+    if (taskList) {
+        wprintf(L"MSTaskListWClass найден: %p\n", taskList);
+    } else {
+        wprintf(L"MSTaskListWClass не найден, пробуем MSTaskSwWClass...\n");
+        HWND rebar = FindWindowExW(tray, nullptr, L"ReBarWindow32", nullptr);
+        if (rebar) {
+            wprintf(L"ReBarWindow32 найден: %p\n", rebar);
+            taskList = FindWindowExW(rebar, nullptr, L"MSTaskSwWClass", nullptr);
+            if (taskList) {
+                wprintf(L"MSTaskSwWClass найден: %p\n", taskList);
+            }
+        }
+    }
+
+    if (!taskList) {
+        wprintf(L"Ошибка: список задач не найден\n");
+        return;
+    }
+
+    // 3. Перебираем дочерние окна
+    struct ButtonInfo {
+        HWND hwnd;
+        std::wstring text;
+    };
+    std::vector<ButtonInfo> buttons;
+
+    auto enumChildProc = [](HWND hwnd, LPARAM lParam) -> BOOL {
+        auto* buttons = reinterpret_cast<std::vector<ButtonInfo>*>(lParam);
+        if (!IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
+            return TRUE;
+        }
+
+        int length = GetWindowTextLengthW(hwnd);
+        if (length > 0) {
+            std::wstring buffer(static_cast<size_t>(length) + 1, L'\0');
+            GetWindowTextW(hwnd, buffer.data(), length + 1);
+            buffer.resize(static_cast<size_t>(length));
+
+            if (!buffer.empty()) {
+                buttons->push_back({hwnd, buffer});
+                wprintf(L"HWND: %p | Text: %s\n", hwnd, buffer.c_str());
+            }
+        }
+        return TRUE;
+    };
+
+    wprintf(L"\n=== Кнопки на панели задач ===\n");
+    EnumChildWindows(taskList, enumChildProc, reinterpret_cast<LPARAM>(&buttons));
+
+    wprintf(L"\n=== Всего найдено кнопок: %zu ===\n", buttons.size());
+    return;
 }
 
 }  // namespace window_manager

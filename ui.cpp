@@ -99,6 +99,17 @@ HWND FindTaskbarToolbarWindow() {
         return nullptr;
     }
 
+    // Windows taskbar structure: Shell_TrayWnd -> MSTaskListWClass -> ToolbarWindow32
+    // MSTaskListWClass is the taskbar list control, and ToolbarWindow32 inside it contains the buttons
+    HWND taskList = FindWindowExW(tray, nullptr, L"MSTaskListWClass", nullptr);
+    if (taskList) {
+        HWND toolbar = FindWindowExW(taskList, nullptr, L"ToolbarWindow32", nullptr);
+        if (toolbar) {
+            return toolbar;
+        }
+    }
+
+    // Fallback: try MSTaskSwWClass (older Windows versions)
     HWND rebar = FindWindowExW(tray, nullptr, L"ReBarWindow32", nullptr);
     HWND taskBand = rebar ? FindWindowExW(rebar, nullptr, L"MSTaskSwWClass", nullptr) : nullptr;
     HWND toolbar = taskBand ? FindWindowExW(taskBand, nullptr, L"ToolbarWindow32", nullptr) : nullptr;
@@ -116,7 +127,14 @@ HWND FindTaskbarToolbarWindow() {
 
         wchar_t className[64]{};
         GetClassNameW(child, className, 64);
-        if (wcscmp(className, L"ToolbarWindow32") == 0 || wcscmp(className, L"MSTaskSwWClass") == 0) {
+        if (wcscmp(className, L"ToolbarWindow32") == 0 || wcscmp(className, L"MSTaskSwWClass") == 0 || wcscmp(className, L"MSTaskListWClass") == 0) {
+            // For MSTaskListWClass, we need to find ToolbarWindow32 inside it
+            if (wcscmp(className, L"MSTaskListWClass") == 0) {
+                HWND nestedToolbar = FindWindowExW(child, nullptr, L"ToolbarWindow32", nullptr);
+                if (nestedToolbar) {
+                    return nestedToolbar;
+                }
+            }
             return child;
         }
 
