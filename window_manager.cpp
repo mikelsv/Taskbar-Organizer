@@ -70,6 +70,19 @@ std::vector<WindowItem> EnumerateWindowsForProcess(DWORD pid) {
     return items;
 }
 
+
+
+bool SwapWindowsByIndex(std::vector<WindowItem>& windows, int firstIndex, int secondIndex) {
+    if (firstIndex < 0 || secondIndex < 0 ||
+        firstIndex >= static_cast<int>(windows.size()) ||
+        secondIndex >= static_cast<int>(windows.size()) ||
+        firstIndex == secondIndex) {
+        return false;
+    }
+
+    std::iter_swap(windows.begin() + firstIndex, windows.begin() + secondIndex);
+    return true;
+}
 void ApplyOrder(const std::vector<WindowItem>& windows, bool manualReorderEnabled) {
     if (!manualReorderEnabled) {
         return;
