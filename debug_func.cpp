@@ -9,12 +9,24 @@
 #include <algorithm>
 #include <cstdio>
 
+#include <shobjidl.h>  // ITaskbarList3
+#include <uiautomation.h>
 #include <fcntl.h>   // для _O_U16TEXT
 #include <io.h>      // для _setmode и _fileno
+#include <iostream>
+#include <thread>
+#include <chrono>
 
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uiautomationcore.lib")
 
 namespace debug_func {
+
+struct WindowInfo {
+    HWND hwnd;
+    std::wstring title;
+};
 
 namespace {
 // Получить PID процесса по имени (без расширения)
@@ -307,6 +319,250 @@ void FindProcessOnTaskbar(const wchar_t* processName) {
             wprintf(L"%zu. %s\n", i + 1, windows[i].title.c_str());
         }
     }
+}
+
+std::vector<std::wstring> GetAllTaskbarOrder()
+{
+    std::vector<std::wstring> result;
+
+    HRESULT hr = CoInitialize(nullptr);
+    if (FAILED(hr))
+        return result;
+
+    IUIAutomation* automation = nullptr;
+    hr = CoCreateInstance(
+        CLSID_CUIAutomation,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_IUIAutomation,
+        (void**)&automation
+    );
+
+    if (FAILED(hr) || !automation)
+    {
+        CoUninitialize();
+        return result;
+    }
+
+    // 1️⃣ Найти окно панели задач (Shell_TrayWnd)
+    HWND trayHwnd = FindWindow(L"Shell_TrayWnd", nullptr);
+    if (!trayHwnd)
+    {
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    IUIAutomationElement* taskbarElement = nullptr;
+    hr = automation->ElementFromHandle(trayHwnd, &taskbarElement);
+    if (FAILED(hr) || !taskbarElement)
+    {
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    // 2️⃣ Найти MSTaskListWClass
+    VARIANT varProp;
+    varProp.vt = VT_BSTR;
+    varProp.bstrVal = SysAllocString(L"MSTaskListWClass");
+
+    IUIAutomationCondition* classCondition = nullptr;
+    automation->CreatePropertyCondition(
+        UIA_ClassNamePropertyId,
+        varProp,
+        &classCondition
+    );
+
+    IUIAutomationElement* appList = nullptr;
+    taskbarElement->FindFirst(
+        TreeScope_Subtree,
+        classCondition,
+        &appList
+    );
+
+    SysFreeString(varProp.bstrVal);
+    classCondition->Release();
+
+    if (!appList)
+    {
+        // fallback — ищем первый ToolBar
+        VARIANT varType;
+        varType.vt = VT_I4;
+        varType.lVal = UIA_ToolBarControlTypeId;
+
+        IUIAutomationCondition* toolbarCondition = nullptr;
+        automation->CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            varType,
+            &toolbarCondition
+        );
+
+        taskbarElement->FindFirst(
+            TreeScope_Subtree,
+            toolbarCondition,
+            &appList
+        );
+
+        toolbarCondition->Release();
+    }
+
+    if (!appList)
+    {
+        taskbarElement->Release();
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    // 3️⃣ Получить дочерние элементы (кнопки)
+    IUIAutomationCondition* trueCondition = nullptr;
+    hr = automation->CreateTrueCondition(&trueCondition);
+
+    IUIAutomationElementArray* children = nullptr;
+    if (SUCCEEDED(hr))
+    {
+        hr = appList->FindAll(TreeScope_Children, trueCondition, &children);
+    }
+
+    if (trueCondition)
+        trueCondition->Release();
+
+    if (children)
+    {
+        int length = 0;
+        children->get_Length(&length);
+
+        for (int i = 0; i < length; ++i)
+        {
+            IUIAutomationElement* child = nullptr;
+            if (SUCCEEDED(children->GetElement(i, &child)) && child)
+            {
+                BSTR name;
+                if (SUCCEEDED(child->get_CurrentName(&name)) && name)
+                {
+                    std::wstring title(name);
+                    SysFreeString(name);
+
+                    if (!title.empty()// &&
+                       ) //title.find(L"Firefox") != std::wstring::npos)
+                    {
+                        result.push_back(title);
+                    }
+                }
+                child->Release();
+            }
+        }
+        children->Release();
+    }
+
+    appList->Release();
+    taskbarElement->Release();
+    automation->Release();
+    CoUninitialize();
+
+    return result;
+}
+
+// Callback для EnumWindows
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
+{
+    auto& data = *reinterpret_cast<std::vector<WindowInfo>*>(lParam);
+
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    DWORD pid;
+    GetWindowThreadProcessId(hwnd, &pid);
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return TRUE;
+
+    PROCESSENTRY32 pe;
+    pe.dwSize = sizeof(pe);
+    if (Process32First(snapshot, &pe))
+    {
+        do {
+            if (pe.th32ProcessID == pid &&
+                _wcsicmp(pe.szExeFile, L"firefox.exe") == 0)
+            {
+                wchar_t buf[512];
+                GetWindowText(hwnd, buf, _countof(buf));
+                if (wcslen(buf) > 0)
+                {
+                    data.push_back({ hwnd, buf });
+                }
+            }
+        } while (Process32Next(snapshot, &pe));
+    }
+    CloseHandle(snapshot);
+
+    return TRUE;
+}
+
+int DebugResortWindows() {
+    // 1️⃣ Собираем окна Firefox
+    std::vector<WindowInfo> windows;
+    EnumWindows(EnumWindowsProc, reinterpret_cast<LPARAM>(&windows));
+    if (windows.empty())
+    {
+        std::wcout << L"Окна Firefox не найдены.\n";
+        return 0;
+    }
+
+    // 2️⃣ Сортируем по заголовку
+    std::sort(windows.begin(), windows.end(),
+        [](const WindowInfo& a, const WindowInfo& b) {
+            std::wstring ta = a.title;
+            std::wstring tb = b.title;
+            std::transform(ta.begin(), ta.end(), ta.begin(), ::towlower);
+            std::transform(tb.begin(), tb.end(), tb.begin(), ::towlower);
+            return ta < tb;
+        });
+
+    // 3️⃣ Инициализация COM
+    HRESULT hr = CoInitialize(nullptr);
+    if (FAILED(hr))
+    {
+        std::wcout << L"CoInitialize failed\n";
+        return 1;
+    }
+
+    ITaskbarList3* pTaskbar = nullptr;
+    hr = CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&pTaskbar));
+    if (FAILED(hr) || !pTaskbar)
+    {
+        std::wcout << L"CoCreateInstance failed\n";
+        CoUninitialize();
+        return 1;
+    }
+
+    hr = pTaskbar->HrInit();
+    if (FAILED(hr))
+    {
+        std::wcout << L"HrInit failed\n";
+        pTaskbar->Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    // 4️⃣ Перестроение
+    std::wcout << L"Сортировка окон на панели задач...\n";
+    for (const auto& wi : windows)
+    {
+        std::wcout << L"Обработка: " << wi.title.substr(0, 50) << L"...\n";
+
+        pTaskbar->DeleteTab(wi.hwnd);
+        pTaskbar->AddTab(wi.hwnd);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    pTaskbar->Release();
+    CoUninitialize();
+
+    std::wcout << L"Готово!\n";
+    return 0;
 }
 
 } // namespace debug_func

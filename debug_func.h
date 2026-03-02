@@ -13,6 +13,9 @@ struct TaskbarWindowInfo {
 };
 
 void CreateDebugConsole();
+int DebugResortWindows();
+
+std::vector<std::wstring> GetAllTaskbarOrder();
 
 // Получить список окон процесса на панели задач
 // processName - имя процесса (например, L"firefox" или L"chrome")

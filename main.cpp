@@ -21,7 +21,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     // Тестовый поиск окон Firefox на панели задач
     debug_func::CreateDebugConsole();
-    debug_func::FindProcessOnTaskbar(L"Firefox");
+    //debug_func::FindProcessOnTaskbar(L"Firefox");
+
+    auto tabs = debug_func::GetAllTaskbarOrder();
+    debug_func::DebugResortWindows();
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);

@@ -41,7 +41,7 @@ def get_windows_by_process_name(process_name):
 *   **Альтернатива:** Библиотека `pyvda` удобнее, если вам нужны только главные окна приложений на рабочем столе.
 """
 
-
+"""
 from pywinauto import Desktop
 
 def get_firefox_taskbar_order():
@@ -80,77 +80,80 @@ try:
             print(f"{i}. {title}")
 except Exception as e:
     print(f"Ошибка при поиске: {e}")
-
-
 """
+
+
 import ctypes
 from ctypes import wintypes
 import psutil
 import win32gui
 import win32process
+import time
 
-def reorder_windows():
-    # 1. Сбор окон Firefox
+def sort_firefox_by_title():
+    # 1. Сбор окон
     firefox_pids = [p.info['pid'] for p in psutil.process_iter(['pid', 'name'])
                     if p.info['name'] == "firefox.exe"]
-    hwnds = []
-    win32gui.EnumWindows(lambda h, _: (hwnds.append(h) if win32gui.IsWindowVisible(h) and
-                         win32process.GetWindowThreadProcessId(h)[1] in firefox_pids and
-                         win32gui.GetWindowText(h) else None), None)
 
-    if len(hwnds) < 2:
-        print("Нужно хотя бы 2 окна.")
-        return
+    window_data = []
+    def enum_cb(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid in firefox_pids:
+                title = win32gui.GetWindowText(hwnd)
+                if title: window_data.append((hwnd, title))
+        return True
 
-    # Меняем два последних окна местами в списке
-    hwnds[-1], hwnds[-2] = hwnds[-2], hwnds[-1]
+    win32gui.EnumWindows(enum_cb, None)
+    if not window_data: return
 
-    # 2. Подготовка COM интерфейса ITaskbarList3
+    # 2. Сортировка по заголовку (второй элемент кортежа)
+    window_data.sort(key=lambda x: x[1].lower())
+
+    # 3. Инициализация COM
     ole32 = ctypes.oledll.ole32
     ole32.CoInitialize(None)
 
-    CLSID_TaskbarList = '{56FDF344-FD6D-11d0-958A-006097C9A090}'
-    IID_ITaskbarList3 = '{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}'
+    CLSID_Tbl = '{56FDF344-FD6D-11D0-958A-006097C9A090}'
+    IID_ITbl3 = '{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}'
 
     def get_guid(s):
         g = (ctypes.c_ubyte * 16)()
         ole32.IIDFromString(ctypes.c_wchar_p(s), g)
         return g
 
-    clsid = get_guid(CLSID_TaskbarList)
-    iid = get_guid(IID_ITaskbarList3)
+    clsid, iid = get_guid(CLSID_Tbl), get_guid(IID_ITbl3)
     tbl = ctypes.c_void_p()
+    ole32.CoCreateInstance(ctypes.byref(clsid), None, 1, ctypes.byref(iid), ctypes.byref(tbl))
 
-    if ole32.CoCreateInstance(ctypes.byref(clsid), None, 1, ctypes.byref(iid), ctypes.byref(tbl)) != 0:
-        print("Ошибка COM")
-        return
+    # Получаем таблицу виртуальных функций (vtable)
+    vtable_ptr = ctypes.cast(tbl, ctypes.POINTER(ctypes.c_void_p)).contents
+    vtable = ctypes.cast(vtable_ptr, ctypes.POINTER(ctypes.c_void_p))
 
-    # Определяем прототипы функций для vtable
-    # Index 3: HrInit(), 4: AddTab(HWND), 5: DeleteTab(HWND)
-    vtable = ctypes.cast(tbl, ctypes.POINTER(ctypes.c_void_p)).contents
+    # Определяем методы: 3-Init, 4-Add, 5-Delete
+    def get_func(idx, arg_type=None):
+        if arg_type:
+            proto = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, arg_type)
+        else:
+            proto = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p)
+        return proto(vtable[idx])
 
-    def get_method(index):
-        proto = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, wintypes.HWND)
-        return proto(ctypes.cast(vtable, ctypes.POINTER(ctypes.c_void_p))[index])
+    hr_init = get_func(3)
+    add_tab = get_func(4, wintypes.HWND)
+    del_tab = get_func(5, wintypes.HWND)
 
-    hr_init = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p)(
-        ctypes.cast(vtable, ctypes.POINTER(ctypes.c_void_p))[3]
-    )
-    add_tab = get_method(4)
-    del_tab = get_method(5)
-
-    # 3. Выполнение
     hr_init(tbl)
-    print("Перестраиваем панель задач...")
 
-    for hwnd in hwnds:
+    # 4. Перестроение
+    print("Сортировка окон на панели задач...")
+    for hwnd, title in window_data:
+        print(f"Обработка: {title[:50]}...")
         del_tab(tbl, hwnd)
         add_tab(tbl, hwnd)
+        time.sleep(0.05) # Пауза для Explorer
 
     ole32.CoUninitialize()
     print("Готово!")
 
 if __name__ == "__main__":
-    reorder_windows()
-
-"""
+    sort_firefox_by_title()
