@@ -683,7 +683,7 @@ void CreateControls(AppState& state) {
     const int margin = 12;
     const int clientWidth = 740;
 
-    state.checkboxManual = CreateWindowExW(0, WC_BUTTONW, L"Enable manual taskbar reorder (experimental, Windows 10 only)",
+    state.checkboxManual = CreateWindowExW(0, WC_BUTTONW, L"[NOT WORK] Enable manual taskbar reorder (experimental, Windows 10 only)",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
         margin, margin, clientWidth - margin * 2, 24,
         state.hwndMain, reinterpret_cast<HMENU>(IDC_CHECK_MANUAL), nullptr, nullptr);
