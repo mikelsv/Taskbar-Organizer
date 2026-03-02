@@ -1,6 +1,12 @@
 #include "ui.h"
 
 #include <commctrl.h>
+
+// LVS_EX_INSERTMARK (0x00000040) may not be defined in older SDKs
+#ifndef LVS_EX_INSERTMARK
+//#define LVS_EX_INSERTMARK 0x00000040
+#define LVS_EX_INSERTMARK 0x00000010
+#endif
 #include <windowsx.h>
 
 #include <algorithm>
@@ -692,7 +698,7 @@ void CreateControls(AppState& state) {
         margin, 80, 560, 300,
         state.hwndMain, reinterpret_cast<HMENU>(IDC_LIST_WINDOWS), nullptr, nullptr);
 
-    ListView_SetExtendedListViewStyle(state.listWindows, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    ListView_SetExtendedListViewStyleEx(state.listWindows, 0, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INSERTMARK);
 
     LVCOLUMNW column{};
     column.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -842,6 +848,25 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                     auto* dragInfo = reinterpret_cast<LPNMLISTVIEW>(lParam);
                     if (dragInfo) {
                         BeginListDrag(*state, dragInfo->iItem);
+                    }
+                } else if (hdr->code == NM_DBLCLK) {
+                    // Двойной клик по ListView - открываем окно
+                    int selectedIndex = ListView_GetNextItem(state->listWindows, -1, LVNI_SELECTED);
+                    if (selectedIndex >= 0 && selectedIndex < static_cast<int>(state->windows.size())) {
+                        HWND targetHwnd = state->windows[selectedIndex].hwnd;
+                        if (IsWindow(targetHwnd)) {
+                            // Определяем текущее состояние окна
+                            int showCmd = SW_RESTORE;
+                            if (IsIconic(targetHwnd)) {
+                                // Окно свёрнуто - восстанавливаем
+                                showCmd = SW_RESTORE;
+                            } else if (IsZoomed(targetHwnd)) {
+                                // Окно развёрнуто на весь экран - показываем максимизированным
+                                showCmd = SW_SHOWMAXIMIZED;
+                            }
+                            ShowWindow(targetHwnd, showCmd);
+                            SetForegroundWindow(targetHwnd);
+                        }
                     }
                 }
             }

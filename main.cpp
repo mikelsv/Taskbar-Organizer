@@ -4,6 +4,7 @@
 #include "ui.h"
 #include "window_manager.h"
 #include "debug_func.h"
+#include "Resource.h"
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"TaskbarOrganizerMainWindow";
@@ -33,8 +34,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = kWindowClassName;
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hIconSm = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCE(IDI_TASKBARORGANIZER));
+    wc.hIconSm = LoadIconW(hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     if (!RegisterClassExW(&wc)) {
         return 0;
