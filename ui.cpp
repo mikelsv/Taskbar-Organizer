@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cwchar>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "process_manager.h"
@@ -253,8 +254,14 @@ void RefreshWindowsListView(AppState& state, int selectedIndex = -1) {
 }
 
 void LoadWindowsForSelectedProcess(AppState& state) {
-    //state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(state.selectedPid, state.windows10Supported);
-    state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(L"firefox.exe");
+    const int selectedIndex = static_cast<int>(SendMessageW(state.comboProcess, CB_GETCURSEL, 0, 0));
+    if (selectedIndex >= 0) {
+        wchar_t processName[256];
+        SendMessageW(state.comboProcess, CB_GETLBTEXT, selectedIndex, reinterpret_cast<LPARAM>(processName));
+        state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(processName);
+    } else {
+        state.windows.clear();
+    }
     RefreshWindowsListView(state);
 }
 
@@ -264,9 +271,19 @@ void PopulateProcessCombo(AppState& state) {
     state.processes = process_manager::EnumerateProcessesWithVisibleWindows();
     SendMessageW(state.comboProcess, CB_RESETCONTENT, 0, 0);
 
+    // Collect unique process names to avoid duplicates
+    std::set<std::wstring> addedNames;
+
     int selectedComboIndex = -1;
     for (size_t i = 0; i < state.processes.size(); ++i) {
         const auto& process = state.processes[i];
+
+        // Skip duplicate process names
+        if (addedNames.count(process.executableName) > 0) {
+            continue;
+        }
+        addedNames.insert(process.executableName);
+
         int idx = static_cast<int>(SendMessageW(state.comboProcess, CB_ADDSTRING, 0,
             reinterpret_cast<LPARAM>(process.executableName.c_str())));
         if (idx >= 0) {
