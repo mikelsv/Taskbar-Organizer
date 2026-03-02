@@ -208,13 +208,13 @@ void ResizeControls(AppState& state, int width, int height) {
 
     const int listWidth = width - (margin * 3 + controlsRightWidth);
     const int listHeight = height - topY - bottomBarHeight - margin * 2;
-    MoveWindow(state.listWindows, margin, topY, listWidth, std::max(120, listHeight), TRUE);
+    MoveWindow(state.listWindows, margin, topY, listWidth, (std::max)(120, listHeight), TRUE);
 
     const int rightX = margin * 2 + listWidth;
     MoveWindow(state.buttonUp, rightX, topY + 40, controlsRightWidth, 30, TRUE);
     MoveWindow(state.buttonDown, rightX, topY + 80, controlsRightWidth, 30, TRUE);
 
-    const int bottomY = topY + std::max(120, listHeight) + gap;
+    const int bottomY = topY + (std::max)(120, listHeight) + gap;
     MoveWindow(state.checkboxApplyOnFly, margin, bottomY, 170, 24, TRUE);
     MoveWindow(state.buttonApply, margin + 180, bottomY - 2, 120, 28, TRUE);
 
