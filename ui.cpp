@@ -56,6 +56,10 @@ struct AppState {
     bool isDraggingTaskbarButton = false;
     int dragSourceIndex = -1;
     int dragTargetIndex = -1;
+
+    bool isListDragging = false;
+    int listDragSourceIndex = -1;
+    int listDropIndex = -1;
 };
 
 struct RemoteHitTest {
@@ -382,6 +386,140 @@ void MoveSelectedWindow(AppState& state, int direction) {
     }
 }
 
+void ClearListInsertMark(AppState& state) {
+    LVINSERTMARK mark{};
+    mark.cbSize = sizeof(mark);
+    mark.iItem = -1;
+    ListView_SetInsertMark(state.listWindows, &mark);
+    state.listDropIndex = -1;
+}
+
+void SetListInsertMarkByDropIndex(AppState& state, int dropIndex) {
+    const int count = ListView_GetItemCount(state.listWindows);
+    if (count <= 0) {
+        ClearListInsertMark(state);
+        return;
+    }
+
+    const int boundedDropIndex = (std::max)(0, (std::min)(dropIndex, count));
+
+    LVINSERTMARK mark{};
+    mark.cbSize = sizeof(mark);
+    mark.dwFlags = 0;
+    if (boundedDropIndex <= 0) {
+        mark.iItem = 0;
+    } else if (boundedDropIndex >= count) {
+        mark.iItem = count - 1;
+        mark.dwFlags = LVIM_AFTER;
+    } else {
+        mark.iItem = boundedDropIndex;
+    }
+
+    ListView_SetInsertMark(state.listWindows, &mark);
+    state.listDropIndex = boundedDropIndex;
+}
+
+int ComputeDropIndexFromScreenPoint(const AppState& state, const POINT& screenPt) {
+    if (!state.listWindows || !IsWindow(state.listWindows)) {
+        return -1;
+    }
+
+    POINT listPt = screenPt;
+    if (!ScreenToClient(state.listWindows, &listPt)) {
+        return -1;
+    }
+
+    const int count = ListView_GetItemCount(state.listWindows);
+    if (count <= 0) {
+        return 0;
+    }
+
+    LVHITTESTINFO hit{};
+    hit.pt = listPt;
+    const int hitItem = ListView_HitTest(state.listWindows, &hit);
+    if (hitItem >= 0 && hitItem < count) {
+        RECT itemRect{};
+        if (ListView_GetItemRect(state.listWindows, hitItem, &itemRect, LVIR_BOUNDS)) {
+            const LONG middleY = itemRect.top + (itemRect.bottom - itemRect.top) / 2;
+            return (listPt.y > middleY) ? hitItem + 1 : hitItem;
+        }
+        return hitItem;
+    }
+
+    if (listPt.y <= 0) {
+        return 0;
+    }
+
+    return count;
+}
+
+void BeginListDrag(AppState& state, int sourceIndex) {
+    if (sourceIndex < 0 || sourceIndex >= static_cast<int>(state.windows.size())) {
+        return;
+    }
+
+    state.isListDragging = true;
+    state.listDragSourceIndex = sourceIndex;
+    state.listDropIndex = sourceIndex;
+    SetCapture(state.hwndMain);
+    SetListInsertMarkByDropIndex(state, sourceIndex);
+}
+
+void UpdateListDrag(AppState& state, const POINT& screenPt) {
+    if (!state.isListDragging) {
+        return;
+    }
+
+    const int dropIndex = ComputeDropIndexFromScreenPoint(state, screenPt);
+    if (dropIndex < 0) {
+        return;
+    }
+
+    SetListInsertMarkByDropIndex(state, dropIndex);
+}
+
+void CancelListDrag(AppState& state) {
+    state.isListDragging = false;
+    state.listDragSourceIndex = -1;
+    state.listDropIndex = -1;
+    ClearListInsertMark(state);
+}
+
+void FinishListDrag(AppState& state) {
+    if (!state.isListDragging) {
+        return;
+    }
+
+    const int sourceIndex = state.listDragSourceIndex;
+    const int dropIndex = state.listDropIndex;
+    const int count = static_cast<int>(state.windows.size());
+
+    CancelListDrag(state);
+    if (GetCapture() == state.hwndMain) {
+        ReleaseCapture();
+    }
+
+    if (sourceIndex < 0 || sourceIndex >= count || dropIndex < 0 || dropIndex > count) {
+        return;
+    }
+
+    const int finalIndex = (dropIndex > sourceIndex) ? (dropIndex - 1) : dropIndex;
+    if (finalIndex == sourceIndex || finalIndex < 0 || finalIndex >= count) {
+        RefreshWindowsListView(state, sourceIndex);
+        return;
+    }
+
+    window_manager::WindowItem movedItem = std::move(state.windows[sourceIndex]);
+    state.windows.erase(state.windows.begin() + sourceIndex);
+    state.windows.insert(state.windows.begin() + finalIndex, std::move(movedItem));
+
+    RefreshWindowsListView(state, finalIndex);
+
+    if (state.applyOnFlyEnabled) {
+        ApplyCurrentOrder(state);
+    }
+}
+
 void DrawDragIndicator(const AppState& state, HDC hdc) {
     if (!state.isDraggingTaskbarButton || state.dragTargetIndex < 0) {
         return;
@@ -697,11 +835,44 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case WM_NOTIFY:
         if (state) {
             auto* hdr = reinterpret_cast<LPNMHDR>(lParam);
-            if (hdr && hdr->idFrom == IDC_LIST_WINDOWS && hdr->code == LVN_ITEMCHANGED) {
-                UpdateMoveButtonsState(*state);
+            if (hdr && hdr->idFrom == IDC_LIST_WINDOWS) {
+                if (hdr->code == LVN_ITEMCHANGED) {
+                    UpdateMoveButtonsState(*state);
+                } else if (hdr->code == LVN_BEGINDRAG) {
+                    auto* dragInfo = reinterpret_cast<LPNMLISTVIEW>(lParam);
+                    if (dragInfo) {
+                        BeginListDrag(*state, dragInfo->iItem);
+                    }
+                }
             }
         }
         return 0;
+
+    case WM_MOUSEMOVE:
+        if (state && state->isListDragging) {
+            POINT screenPt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ClientToScreen(hwnd, &screenPt);
+            UpdateListDrag(*state, screenPt);
+            return 0;
+        }
+        break;
+
+    case WM_LBUTTONUP:
+        if (state && state->isListDragging) {
+            POINT screenPt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ClientToScreen(hwnd, &screenPt);
+            UpdateListDrag(*state, screenPt);
+            FinishListDrag(*state);
+            return 0;
+        }
+        break;
+
+    case WM_CAPTURECHANGED:
+        if (state && state->isListDragging && reinterpret_cast<HWND>(lParam) != hwnd) {
+            CancelListDrag(*state);
+            return 0;
+        }
+        break;
 
     case WM_APP_MANUAL_REORDER:
         if (state) {
