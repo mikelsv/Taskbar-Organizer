@@ -424,11 +424,6 @@ int ComputeDropIndexFromScreenPoint(const AppState& state, const POINT& screenPt
         return -1;
     }
 
-    RECT listRect{};
-    if (!GetWindowRect(state.listWindows, &listRect)) {
-        return -1;
-    }
-
     POINT listPt = screenPt;
     if (!ScreenToClient(state.listWindows, &listPt)) {
         return -1;
@@ -483,6 +478,13 @@ void UpdateListDrag(AppState& state, const POINT& screenPt) {
     SetListInsertMarkByDropIndex(state, dropIndex);
 }
 
+void CancelListDrag(AppState& state) {
+    state.isListDragging = false;
+    state.listDragSourceIndex = -1;
+    state.listDropIndex = -1;
+    ClearListInsertMark(state);
+}
+
 void FinishListDrag(AppState& state) {
     if (!state.isListDragging) {
         return;
@@ -492,11 +494,10 @@ void FinishListDrag(AppState& state) {
     const int dropIndex = state.listDropIndex;
     const int count = static_cast<int>(state.windows.size());
 
-    state.isListDragging = false;
-    state.listDragSourceIndex = -1;
-    state.listDropIndex = -1;
-    ClearListInsertMark(state);
-    ReleaseCapture();
+    CancelListDrag(state);
+    if (GetCapture() == state.hwndMain) {
+        ReleaseCapture();
+    }
 
     if (sourceIndex < 0 || sourceIndex >= count || dropIndex < 0 || dropIndex > count) {
         return;
@@ -858,6 +859,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 
     case WM_LBUTTONUP:
         if (state && state->isListDragging) {
+            POINT screenPt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ClientToScreen(hwnd, &screenPt);
+            UpdateListDrag(*state, screenPt);
             FinishListDrag(*state);
             return 0;
         }
@@ -865,7 +869,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 
     case WM_CAPTURECHANGED:
         if (state && state->isListDragging && reinterpret_cast<HWND>(lParam) != hwnd) {
-            FinishListDrag(*state);
+            CancelListDrag(*state);
             return 0;
         }
         break;
