@@ -308,7 +308,7 @@ void PopulateProcessCombo(AppState& state) {
 }
 
 void ApplyCurrentOrder(AppState& state) {
-    window_manager::ApplyOrder(state.windows, state.manualReorderEnabled);
+    window_manager::ApplyTaskbarOrder(state.windows);
 }
 
 void MoveSelectedWindow(AppState& state, int direction) {

@@ -367,7 +367,7 @@ std::vector<WindowItem> GetWindowsForProcesses(
     return result;
 }
 
-std::vector<WindowItem> EnumerateWindowsForProcessByTaskbarOrder(std::wstring processName){    
+std::vector<WindowItem> EnumerateWindowsForProcessByTaskbarOrder(std::wstring processName){
     auto targetPids = GetProcessIdsByName(processName);
     auto windows = GetWindowsForProcesses(targetPids);
     std::vector<WindowItem> result;
@@ -564,6 +564,46 @@ void ApplyOrder(const std::vector<WindowItem>& windows, bool manualReorderEnable
     }
 }
 
+void ApplyTaskbarOrder(const std::vector<WindowItem>& windows) {
+    if (windows.empty()) {
+        return;
+    }
+
+    HRESULT hr = CoInitialize(nullptr);
+    if (FAILED(hr)) {
+        return;
+    }
+
+    ITaskbarList3* pTaskbar = nullptr;
+    hr = CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&pTaskbar));
+    if (FAILED(hr) || !pTaskbar) {
+        CoUninitialize();
+        return;
+    }
+
+    hr = pTaskbar->HrInit();
+    if (FAILED(hr)) {
+        pTaskbar->Release();
+        CoUninitialize();
+        return;
+    }
+
+    for (const auto& item : windows) {
+        if (!IsWindow(item.hwnd)) {
+            continue;
+        }
+
+        pTaskbar->DeleteTab(item.hwnd);
+        pTaskbar->AddTab(item.hwnd);
+
+        Sleep(100);  // Пауза 100мс чтобы окна успели отобразиться в нужной последовательности
+    }
+
+    pTaskbar->Release();
+    CoUninitialize();
+}
+
 // Универсальная замена wprintf
 int console_log(const wchar_t* format, ...) {
     wchar_t buffer[1024]; // Буфер для текста
@@ -581,7 +621,7 @@ int console_log(const wchar_t* format, ...) {
 }
 
 // Маскируем под wprintf (теперь можно просто сменить название или оставить это)
-#define wprintf console_log 
+#define wprintf console_log
 
 // Тестовая функция для отладки - выводит список кнопок на панели задач
 void DebugPrintTaskbarButtons() {
