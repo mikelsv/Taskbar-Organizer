@@ -235,7 +235,7 @@ void RefreshWindowsListView(AppState& state, int selectedIndex = -1) {
 }
 
 void LoadWindowsForSelectedProcess(AppState& state) {
-    state.windows = window_manager::EnumerateWindowsForProcess(state.selectedPid);
+    state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(state.selectedPid, state.windows10Supported);
     RefreshWindowsListView(state);
 }
 
@@ -541,6 +541,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         if (!appState->windows10Supported) {
             EnableWindow(appState->checkboxManual, FALSE);
             SendMessageW(appState->checkboxManual, BM_SETCHECK, BST_UNCHECKED, 0);
+            MessageBoxW(hwnd,
+                L"Taskbar toolbar synchronization is only supported on Windows 10. Falling back to EnumWindows order.",
+                L"Taskbar Organizer",
+                MB_OK | MB_ICONINFORMATION);
         }
 
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(appState.release()));
