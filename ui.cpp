@@ -322,8 +322,60 @@ void MoveSelectedWindow(AppState& state, int direction) {
         return;
     }
 
-    window_manager::SwapWindowsByIndex(state.windows, selected, newIndex);
-    RefreshWindowsListView(state, newIndex);
+    // Меняем местами окна в векторе
+    std::swap(state.windows[selected], state.windows[newIndex]);
+
+    // Меняем местами названия в ListView без пересоздания списка
+    wchar_t text1[512] = {};
+    wchar_t text2[512] = {};
+
+    LVITEMW lvi1{}, lvi2{};
+    lvi1.iItem = selected;
+    lvi1.iSubItem = 0;
+    lvi1.pszText = text1;
+    lvi1.cchTextMax = 512;
+    lvi1.mask = LVIF_TEXT;
+    ListView_GetItem(state.listWindows, &lvi1);
+
+    lvi2.iItem = newIndex;
+    lvi2.iSubItem = 0;
+    lvi2.pszText = text2;
+    lvi2.cchTextMax = 512;
+    lvi2.mask = LVIF_TEXT;
+    ListView_GetItem(state.listWindows, &lvi2);
+
+    // Меняем текст местами
+    lvi1.pszText = text2;
+    lvi2.pszText = text1;
+    ListView_SetItem(state.listWindows, &lvi1);
+    ListView_SetItem(state.listWindows, &lvi2);
+
+    // Меняем lParam (HWND) местами
+    LVITEMW lparam1{}, lparam2{};
+    lparam1.iItem = selected;
+    lparam1.mask = LVIF_PARAM;
+    ListView_GetItem(state.listWindows, &lparam1);
+
+    lparam2.iItem = newIndex;
+    lparam2.mask = LVIF_PARAM;
+    ListView_GetItem(state.listWindows, &lparam2);
+
+    LPARAM tempParam = lparam1.lParam;
+    lparam1.lParam = lparam2.lParam;
+    lparam2.lParam = tempParam;
+
+    ListView_SetItem(state.listWindows, &lparam1);
+    ListView_SetItem(state.listWindows, &lparam2);
+
+    // Обновляем выделение на новое положение
+    ListView_SetItemState(state.listWindows, newIndex, LVIS_SELECTED, LVIS_SELECTED);
+    ListView_SetItemState(state.listWindows, selected, 0, LVIS_SELECTED);
+
+    // Устанавливаем фокус отдельно
+    ListView_SetItemState(state.listWindows, newIndex, LVIS_FOCUSED, LVIS_FOCUSED);
+    SetFocus(state.listWindows);
+
+    UpdateMoveButtonsState(state);
 
     if (state.applyOnFlyEnabled) {
         ApplyCurrentOrder(state);
