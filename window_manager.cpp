@@ -334,33 +334,12 @@ int console_log(const wchar_t* format, ...) {
 // Маскируем под wprintf (теперь можно просто сменить название или оставить это)
 #define wprintf console_log 
 
-void CreateDebugConsole() {
-    // 1. Создаем консоль
-    if (AllocConsole()) {
-        FILE* fDummy;
-        // 1. Открываем как обычный текст
-        freopen_s(&fDummy, "CONOUT$", "w", stdout);
-        freopen_s(&fDummy, "CONOUT$", "w", stderr);
-        freopen_s(&fDummy, "CONIN$", "r", stdin);
-
-        // 1. Устанавливаем кодировку вывода в саму консоль (UTF-8)
-        SetConsoleOutputCP(CP_UTF8);
-        SetConsoleCP(CP_UTF8);
-
-        // 2. Переключаем поток в режим UTF-8 (это уберет мусор и позволит писать по-русски)
-        _setmode(_fileno(stdout), _O_U8TEXT);
-
-        // Опционально: переназвать окно консоли
-        SetConsoleTitle(L"Debug Console");
-    }
-}
-
 // Тестовая функция для отладки - выводит список кнопок на панели задач
 void DebugPrintTaskbarButtons() {
     // Настраиваем консоль для вывода Unicode
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
-    CreateDebugConsole();
+    //CreateDebugConsole();
 
     wprintf(L"=== Тест получения кнопок панели задач ===\n\n");
 

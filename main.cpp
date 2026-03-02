@@ -3,6 +3,7 @@
 
 #include "ui.h"
 #include "window_manager.h"
+#include "debug_func.h"
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"TaskbarOrganizerMainWindow";
@@ -16,7 +17,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     InitCommonControlsEx(&icc);
 
     // Тестовый вывод кнопок панели задач
-    window_manager::DebugPrintTaskbarButtons();
+    //window_manager::DebugPrintTaskbarButtons();
+
+    // Тестовый поиск окон Firefox на панели задач
+    debug_func::CreateDebugConsole();
+    debug_func::FindProcessOnTaskbar(L"Firefox");
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);

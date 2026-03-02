@@ -41,7 +41,7 @@ def get_windows_by_process_name(process_name):
 *   **Альтернатива:** Библиотека `pyvda` удобнее, если вам нужны только главные окна приложений на рабочем столе.
 """
 
-"""
+
 from pywinauto import Desktop
 
 def get_firefox_taskbar_order():
@@ -56,6 +56,7 @@ def get_firefox_taskbar_order():
         app_list = taskbar.child_window(class_name="MSTaskListWClass")
     except Exception:
         # Если класс не найден, попробуем найти через глубинный поиск первой попавшейся панели инструментов
+        print("MSTaskListWClass не найден.")
         app_list = taskbar.descendants(control_type="ToolBar")[0]
 
     firefox_windows = []
@@ -79,8 +80,9 @@ try:
             print(f"{i}. {title}")
 except Exception as e:
     print(f"Ошибка при поиске: {e}")
-"""
 
+
+"""
 import ctypes
 from ctypes import wintypes
 import psutil
@@ -150,3 +152,5 @@ def reorder_windows():
 
 if __name__ == "__main__":
     reorder_windows()
+
+"""
