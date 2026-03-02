@@ -9,8 +9,14 @@
 #include <io.h>      // для _setmode и _fileno
 #include <clocale>   // для setlocale и LC_ALL
 
+#include <shobjidl.h>  // ITaskbarList3
+#include <uiautomation.h>
+#include <tlhelp32.h>
+
 namespace window_manager {
 namespace {
+
+
 
 bool IsEligibleTopLevelWindow(HWND hwnd) {
     if (!IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
@@ -285,6 +291,249 @@ std::vector<WindowItem> EnumerateWindowsForProcessByTaskbarOrder(DWORD pid, bool
 
     return ordered;
 }
+
+
+std::vector<DWORD> GetProcessIdsByName(const std::wstring& processName)
+{
+    std::vector<DWORD> pids;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return pids;
+
+    PROCESSENTRY32 pe;
+    pe.dwSize = sizeof(pe);
+
+    if (Process32First(snapshot, &pe))
+    {
+        do
+        {
+            if (_wcsicmp(pe.szExeFile, processName.c_str()) == 0)
+            {
+                pids.push_back(pe.th32ProcessID);
+            }
+        } while (Process32Next(snapshot, &pe));
+    }
+
+    CloseHandle(snapshot);
+    return pids;
+}
+
+BOOL CALLBACK EnumWindowsProcGetHwndByIds(HWND hwnd, LPARAM lParam){
+    EnumData* data = reinterpret_cast<EnumData*>(lParam);
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+
+    // Проверяем, принадлежит ли окно нужному процессу
+    if (std::find(data->targetPids->begin(),
+        data->targetPids->end(),
+        pid) == data->targetPids->end())
+        return TRUE;
+
+    // Фильтрация "нормальных" окон
+    if (!IsWindowVisible(hwnd))
+        return TRUE;
+
+    if (GetWindow(hwnd, GW_OWNER) != nullptr) // исключаем дочерние/всплывающие
+        return TRUE;
+
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    if (!(style & WS_OVERLAPPEDWINDOW))
+        return TRUE;
+
+    wchar_t title[512];
+    GetWindowText(hwnd, title, 512);
+
+    if (wcslen(title) == 0)
+        return TRUE;
+
+    data->result->push_back({ hwnd, title });
+
+    return TRUE;
+}
+
+std::vector<WindowItem> GetWindowsForProcesses(
+    const std::vector<DWORD>& targetPids)
+{
+    std::vector<WindowItem> result;
+
+    EnumData data;
+    data.targetPids = &targetPids;
+    data.result = &result;
+
+    EnumWindows(EnumWindowsProcGetHwndByIds, reinterpret_cast<LPARAM>(&data));
+
+    return result;
+}
+
+std::vector<WindowItem> EnumerateWindowsForProcessByTaskbarOrder(std::wstring processName){    
+    auto targetPids = GetProcessIdsByName(processName);
+    auto windows = GetWindowsForProcesses(targetPids);
+    std::vector<WindowItem> result;
+
+    HRESULT hr = CoInitialize(nullptr);
+    if (FAILED(hr))
+        return result;
+
+    IUIAutomation* automation = nullptr;
+    hr = CoCreateInstance(
+        CLSID_CUIAutomation,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_IUIAutomation,
+        (void**)&automation
+    );
+
+    if (FAILED(hr) || !automation)
+    {
+        CoUninitialize();
+        return result;
+    }
+
+    // 1️⃣ Найти окно панели задач (Shell_TrayWnd)
+    HWND trayHwnd = FindWindow(L"Shell_TrayWnd", nullptr);
+    if (!trayHwnd)
+    {
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    IUIAutomationElement* taskbarElement = nullptr;
+    hr = automation->ElementFromHandle(trayHwnd, &taskbarElement);
+    if (FAILED(hr) || !taskbarElement)
+    {
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    // 2️⃣ Найти MSTaskListWClass
+    VARIANT varProp;
+    varProp.vt = VT_BSTR;
+    varProp.bstrVal = SysAllocString(L"MSTaskListWClass");
+
+    IUIAutomationCondition* classCondition = nullptr;
+    automation->CreatePropertyCondition(
+        UIA_ClassNamePropertyId,
+        varProp,
+        &classCondition
+    );
+
+    IUIAutomationElement* appList = nullptr;
+    taskbarElement->FindFirst(
+        TreeScope_Subtree,
+        classCondition,
+        &appList
+    );
+
+    SysFreeString(varProp.bstrVal);
+    classCondition->Release();
+
+    if (!appList)
+    {
+        // fallback — ищем первый ToolBar
+        VARIANT varType;
+        varType.vt = VT_I4;
+        varType.lVal = UIA_ToolBarControlTypeId;
+
+        IUIAutomationCondition* toolbarCondition = nullptr;
+        automation->CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            varType,
+            &toolbarCondition
+        );
+
+        taskbarElement->FindFirst(
+            TreeScope_Subtree,
+            toolbarCondition,
+            &appList
+        );
+
+        toolbarCondition->Release();
+    }
+
+    if (!appList)
+    {
+        taskbarElement->Release();
+        automation->Release();
+        CoUninitialize();
+        return result;
+    }
+
+    // 3️⃣ Получить дочерние элементы (кнопки)
+    IUIAutomationCondition* trueCondition = nullptr;
+    hr = automation->CreateTrueCondition(&trueCondition);
+
+    IUIAutomationElementArray* children = nullptr;
+    if (SUCCEEDED(hr))
+    {
+        hr = appList->FindAll(TreeScope_Children, trueCondition, &children);
+    }
+
+    if (trueCondition)
+        trueCondition->Release();
+
+    if (children)
+    {
+        int length = 0;
+        children->get_Length(&length);
+
+        for (int i = 0; i < length; ++i)
+        {
+            IUIAutomationElement* child = nullptr;
+
+            if (SUCCEEDED(children->GetElement(i, &child)) && child)
+            {
+                // 2️⃣ Получаем имя кнопки панели задач
+                BSTR name = nullptr;
+                std::wstring taskbarTitle;
+
+                if (SUCCEEDED(child->get_CurrentName(&name)) && name)
+                {
+                    taskbarTitle = name;
+                    SysFreeString(name);
+                }
+
+                if (taskbarTitle.empty())
+                {
+                    child->Release();
+                    continue;
+                }
+
+                // 3️⃣ Ищем соответствующее реальное окно
+                auto it = std::find_if(
+                    windows.begin(),
+                    windows.end(),
+                    [&](const WindowItem& w)
+                    {
+                        // Сравнение с учётом того,
+                        // что в taskbarTitle может быть дописан текст
+                        return taskbarTitle.find(w.title) != std::wstring::npos;
+                    });
+
+                if (it != windows.end())
+                {
+                    result.push_back(*it);
+                    windows.erase(it); // чтобы не матчить повторно
+                }
+
+                child->Release();
+            }
+        }
+
+        children->Release();
+    }
+
+    appList->Release();
+    taskbarElement->Release();
+    automation->Release();
+    CoUninitialize();
+
+    return result;
+}
+
 
 bool SwapWindowsByIndex(std::vector<WindowItem>& windows, int firstIndex, int secondIndex) {
     if (firstIndex < 0 || secondIndex < 0 ||

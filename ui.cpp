@@ -253,7 +253,8 @@ void RefreshWindowsListView(AppState& state, int selectedIndex = -1) {
 }
 
 void LoadWindowsForSelectedProcess(AppState& state) {
-    state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(state.selectedPid, state.windows10Supported);
+    //state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(state.selectedPid, state.windows10Supported);
+    state.windows = window_manager::EnumerateWindowsForProcessByTaskbarOrder(L"firefox.exe");
     RefreshWindowsListView(state);
 }
 
