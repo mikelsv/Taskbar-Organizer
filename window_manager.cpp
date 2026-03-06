@@ -506,17 +506,17 @@ std::vector<WindowItem> EnumerateWindowsForProcessByTaskbarOrder(std::wstring pr
                 auto it = std::find_if(
                     windows.begin(),
                     windows.end(),
-                    [&](const WindowItem& w)
-                    {
-                        // Сравнение с учётом того,
-                        // что в taskbarTitle может быть дописан текст
+                    [&](const WindowItem& w){
+                        if (w.title.length() > 256)
+                            return taskbarTitle.find(w.title.substr(0, 256)) != std::wstring::npos;
+
                         return taskbarTitle.find(w.title) != std::wstring::npos;
                     });
 
                 if (it != windows.end())
                 {
                     result.push_back(*it);
-                    windows.erase(it); // чтобы не матчить повторно
+                    windows.erase(it);
                 }
 
                 child->Release();
@@ -589,16 +589,32 @@ void ApplyTaskbarOrder(const std::vector<WindowItem>& windows) {
         return;
     }
 
-    for (const auto& item : windows) {
-        if (!IsWindow(item.hwnd)) {
-            continue;
+    for (size_t i = 1; i < windows.size(); ++i) {
+        if (IsWindow(windows[i].hwnd)) {
+            pTaskbar->DeleteTab(windows[i].hwnd);
         }
-
-        pTaskbar->DeleteTab(item.hwnd);
-        pTaskbar->AddTab(item.hwnd);
-
-        Sleep(100);  // Пауза 100мс чтобы окна успели отобразиться в нужной последовательности
     }
+
+    Sleep(1000);
+
+    for (const auto& item : windows) {
+        if (IsWindow(item.hwnd)) {
+            pTaskbar->AddTab(item.hwnd);
+
+            Sleep(100);
+        }
+    }
+
+    //for (const auto& item : windows) {
+    //    if (!IsWindow(item.hwnd)) {
+    //        continue;
+    //    }
+
+    //    pTaskbar->DeleteTab(item.hwnd);
+    //    pTaskbar->AddTab(item.hwnd);
+
+    //    Sleep(100);  // Пауза 100мс чтобы окна успели отобразиться в нужной последовательности
+    //}
 
     pTaskbar->Release();
     CoUninitialize();
